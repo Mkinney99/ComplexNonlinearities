@@ -13,6 +13,9 @@
 #include "../JuceLibraryCode/JuceHeader.h"
 #include "Gain.h"
 #include "EQFilter.h"
+#define _USE_MATH_DEFINES
+#include <cmath>
+#include "PluginParameter.h"
 
 //==============================================================================
 /**
@@ -59,6 +62,20 @@ public:
 
     AudioProcessorValueTreeState& getVTS() {  return vts; }
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    //==============================================================================
+
+    AudioSampleBuffer delayBuffer;
+    int delayBufferSamples;
+    int delayBufferChannels;
+    int delayWritePosition;
+
+    //======================================
+
+    PluginParametersManager parameters;
+
+    PluginParameterLinSlider paramDelayTime;
+    PluginParameterLinSlider paramFeedback;
+    PluginParameterLinSlider paramMix;
 
 private:
     AudioProcessorValueTreeState vts;
