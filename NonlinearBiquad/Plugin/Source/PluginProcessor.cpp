@@ -23,6 +23,13 @@ NonlinearBiquadAudioProcessor::NonlinearBiquadAudioProcessor()
                      #endif
                        ),
 #endif
+    parameters (*this)
+    , paramDelayTime (parameters, "Delay time", "s", 0.0f, 5.0f, 0.1f)
+    , paramFeedback (parameters, "Feedback", "", 0.0f, 0.9f, 0.7f)
+    , paramMix (parameters, "Mix", "", 0.0f, 1.0f, 1.0f)
+{
+    parameters.apvts.state = ValueTree (Identifier (getName().removeCharacters ("- ")));
+}
     vts (*this, nullptr, Identifier ("Parameters"), createParameterLayout()),
     oversampling (2, 3, dsp::Oversampling<float>::filterHalfBandPolyphaseIIR)
 {
@@ -132,6 +139,23 @@ void NonlinearBiquadAudioProcessor::prepareToPlay (double sampleRate, int sample
 
         inGain[ch].prepare();
     }
+    const double smoothTime = 1e-3;
+    paramDelayTime.reset (sampleRate, smoothTime);
+    paramFeedback.reset (sampleRate, smoothTime);
+    paramMix.reset (sampleRate, smoothTime);
+
+    //======================================
+
+    float maxDelayTime = paramDelayTime.maxValue;
+    delayBufferSamples = (int)(maxDelayTime * (float)sampleRate) + 1;
+    if (delayBufferSamples < 1)
+        delayBufferSamples = 1;
+
+    delayBufferChannels = getTotalNumInputChannels();
+    delayBuffer.setSize (delayBufferChannels, delayBufferSamples);
+    delayBuffer.clear();
+
+    delayWritePosition = 0;
 }
 
 void NonlinearBiquadAudioProcessor::releaseResources()
@@ -193,6 +217,52 @@ void NonlinearBiquadAudioProcessor::processBlock (AudioBuffer<float>& buffer, Mi
     }
 
     oversampling.processSamplesDown (block);
+  const int numInputChannels = getTotalNumInputChannels();
+    const int numOutputChannels = getTotalNumOutputChannels();
+    const int numSamples = buffer.getNumSamples();
+
+    //======================================
+
+    float currentDelayTime = paramDelayTime.getTargetValue() * (float)getSampleRate();
+    float currentFeedback = paramFeedback.getNextValue();
+    float currentMix = paramMix.getNextValue();
+
+    int localWritePosition;
+
+    for (int channel = 0; channel < numInputChannels; ++channel) {
+        float* channelData = buffer.getWritePointer (channel);
+        float* delayData = delayBuffer.getWritePointer (channel);
+        localWritePosition = delayWritePosition;
+
+        for (int sample = 0; sample < numSamples; ++sample) {
+            const float in = channelData[sample];
+            float out = 0.0f;
+
+            float readPosition =
+                fmodf ((float)localWritePosition - currentDelayTime + (float)delayBufferSamples, delayBufferSamples);
+            int localReadPosition = floorf (readPosition);
+
+            if (localReadPosition != localWritePosition) {
+                float fraction = readPosition - (float)localReadPosition;
+                float delayed1 = delayData[(localReadPosition + 0)];
+                float delayed2 = delayData[(localReadPosition + 1) % delayBufferSamples];
+                out = delayed1 + fraction * (delayed2 - delayed1);
+
+                channelData[sample] = in + currentMix * (out - in);
+                delayData[localWritePosition] = in + out * currentFeedback;
+            }
+
+            if (++localWritePosition >= delayBufferSamples)
+                localWritePosition -= delayBufferSamples;
+        }
+    }
+
+    delayWritePosition = localWritePosition;
+
+    //======================================
+
+    for (int channel = numInputChannels; channel < numOutputChannels; ++channel)
+        buffer.clear (channel, 0, numSamples);
 }
 
 //==============================================================================
@@ -212,6 +282,9 @@ void NonlinearBiquadAudioProcessor::getStateInformation (MemoryBlock& destData)
     auto state = vts.copyState();
     std::unique_ptr<XmlElement> xml (state.createXml());
     copyXmlToBinary (*xml, destData);
+    auto state1 = parameters.apvts.copyState();
+    std::unique_ptr<XmlElement> xml (state1.createXml());
+    copyXmlToBinary (*xml, destData);
 }
 
 void NonlinearBiquadAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -221,6 +294,10 @@ void NonlinearBiquadAudioProcessor::setStateInformation (const void* data, int s
     if (xmlState.get() != nullptr)
         if (xmlState->hasTagName (vts.state.getType()))
             vts.replaceState (ValueTree::fromXml (*xmlState));
+    if (xmlState.get() != nullptr)
+        if (xmlState->hasTagName (parameters.apvts.state.getType()))
+            parameters.apvts.replaceState (ValueTree::fromXml (*xmlState));
+  
 }
 
 //==============================================================================
