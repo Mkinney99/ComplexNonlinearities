@@ -10,6 +10,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "PluginParameter.h"
 
 //==============================================================================
 NonlinearBiquadAudioProcessor::NonlinearBiquadAudioProcessor()
